@@ -1,99 +1,147 @@
-#include <bluefruit.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+
+#define UUID16_SVC_ENVIRONMENTAL_SENSING                      0x181A
+#define UUID16_CHR_VOLTAGE                                    0x2B18
 
 const int LED = D6;
 
-BLEClientService        service        = BLEClientService(UUID16_SVC_ENVIRONMENTAL_SENSING);
-BLEClientCharacteristic characteristic = BLEClientCharacteristic(UUID16_CHR_VOLTAGE);
+// The remote service we wish to connect to.
+static BLEUUID serviceUUID((uint16_t)UUID16_SVC_ENVIRONMENTAL_SENSING);
+// The characteristic of the remote service we are interested in.
+static BLEUUID charUUID((uint16_t)UUID16_CHR_VOLTAGE);
+
+static BLEAdvertisedDevice *myDevice;
+static BLERemoteCharacteristic *pRemoteCharacteristic;
+
+static boolean doConnect = false;
+static boolean connected = false;
+static boolean doScan = false;
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial.available()) { delay(10); }
 
   pinMode(LED, OUTPUT);
+  digitalWrite(LED, HIGH);
+  delay(2500);
   digitalWrite(LED, LOW);
+
+  Serial.println("ESP32C3 Central");
 
   // Bluetooth initialization
   initBt();
 }
 
 void loop() {
-  // Wait for response from peripheral
-  Serial.println("Connecting to Peripheral");
-  while (!Bluefruit.connected())
-  {
-    Serial.print(".");
-    delay(1000);
+// If the flag "doConnect" is true then we have scanned for and found the desired
+  // BLE Server with which we wish to connect.  Now we connect to it.  Once we are
+  // connected we set the connected flag to be true.
+  if (doConnect == true) {
+    if (connectToPeripheral()) {
+      Serial.println("We are now connected to the BLE Server.");
+    } else {
+      Serial.println("We have failed to connect to the server; there is nothing more we will do.");
+    }
+    doConnect = false;
   }
-  Serial.println("");
-  Serial.println("Connected to Peripheral");
-}
 
-void initBt()
-{
-  Bluefruit.configCentralBandwidth(BANDWIDTH_MAX);
-  Bluefruit.begin(1,1); // 1 peripheral, 1 central
-  Bluefruit.setName("BLE Central");
+  if (doScan) {
+    BLEDevice::getScan()->start(0);  // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
+  }
 
-  service.begin();
-  characteristic.setNotifyCallback(data_notify_callback);
-  characteristic.begin();
-
-  
-  // Connection callback discovers service and characteristic and enables notification.
-  Bluefruit.Central.setConnectCallback(connect_callback);
-
-  // Scanner settings. Scan callback connects to peripheral.
-  Bluefruit.Scanner.setRxCallback(scan_callback);
-  Bluefruit.Scanner.restartOnDisconnect(true);
-  Bluefruit.Scanner.setIntervalMS(100, 50);     // interval:100mS  window:50mS  
-  Bluefruit.Scanner.filterUuid(service.uuid);
-  Bluefruit.Scanner.useActiveScan(false);
-  Bluefruit.Scanner.start(0);                   // Continuous Scanning
+  delay(1000);  // Delay a second between loops.
 }
 
 // Callback invoked when scanner pick up an advertising data
-void scan_callback(ble_gap_evt_adv_report_t* report)
+class AdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    Serial.print("BLE Advertised Device found: ");
+    Serial.println(advertisedDevice.toString().c_str());
+
+    // We have found a device, let us now see if it contains the service we are looking for.
+    if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
+
+      BLEDevice::getScan()->stop();
+      myDevice = new BLEAdvertisedDevice(advertisedDevice);
+      doConnect = true;
+      doScan = true;
+    }
+  }
+};
+
+class ClientCallbacks : public BLEClientCallbacks {
+  void onConnect(BLEClient *pclient) {
+    Serial.println("onConnect");
+  }
+
+  void onDisconnect(BLEClient *pclient) {
+    connected = false;
+    Serial.println("onDisconnect");
+  }
+};
+
+void initBt()
 {
-  Bluefruit.Central.connect(report);
+  BLEDevice::init("");
+  BLEScan *bleScan = BLEDevice::getScan();
+  bleScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
+  bleScan->setInterval(100);
+  bleScan->setWindow(50);
+  bleScan->setActiveScan(true);
+  bleScan->start(0);
 }
 
-// Callback invoked when a connection is established
-void connect_callback(uint16_t conn_handle)
-{
-  if ( !service.discover(conn_handle) )
-  {
-    Serial.println("Service not found. Disconnecting.");
-    Bluefruit.disconnect(conn_handle);
-    return;
+
+bool connectToPeripheral() {
+  Serial.print("Connecting to ");
+  Serial.println(myDevice->getAddress().toString().c_str());
+
+  BLEClient *pClient = BLEDevice::createClient();
+  pClient->setClientCallbacks(new ClientCallbacks());
+  pClient->connect(myDevice);
+
+  Serial.println("Connect returned");
+
+  // Obtain a reference to the service we are after in the remote BLE server.
+  BLERemoteService *pRemoteService = pClient->getService(serviceUUID);
+  if (pRemoteService == nullptr) {
+    Serial.print("Failed to find our service UUID: ");
+    Serial.println(serviceUUID.toString().c_str());
+    pClient->disconnect();
+    return false;
   }
-  Serial.println("Service found.");
-  
-  if ( !characteristic.discover() )
-  {
-    Serial.println("Characteristic not found. Disconnecting.");
-    Bluefruit.disconnect(conn_handle);
-    return;
+
+  // Obtain a reference to the characteristic in the service of the remote BLE server.
+  pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
+  if (pRemoteCharacteristic == nullptr) {
+    Serial.print("Failed to find our characteristic UUID: ");
+    Serial.println(charUUID.toString().c_str());
+    pClient->disconnect();
+    return false;
   }
-  Serial.println("Characteristic found.");
-  
-  if ( !characteristic.enableNotify() )
-  {
-    Serial.println("Couldn't enable notify for characteristic.");
-    Bluefruit.disconnect(conn_handle);
-    return;
+
+  if (!pRemoteCharacteristic->canNotify()) {
+    Serial.println("Characteristic can't notify");
+    pClient->disconnect();
+    return false;
   }
-  Serial.println("Characteristic notification enabled.");
+
+  pRemoteCharacteristic->registerForNotify(notifyCallback);
+
+  Serial.println("Registered for notification");
+  connected = true;
+  return true;
 }
 
-// Callback invoked when a notifyication is received
-void data_notify_callback(BLEClientCharacteristic* chr, uint8_t* data, uint16_t len)
-{
+// Callback invoked when a notification is received
+static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
   Serial.println("Notification received. Set LED high, delay, set LED low");
   digitalWrite(LED, HIGH);
 
   // Do something with the data
-  delay(500);
+  delay(100);
 
   digitalWrite(LED, LOW);
 }
-

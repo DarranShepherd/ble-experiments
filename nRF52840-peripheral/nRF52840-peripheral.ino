@@ -14,10 +14,13 @@ uint8_t  bps = 0;              // Counter used to increment the characteristic v
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial.available()) { delay(10); }
 
   pinMode(LED, OUTPUT);
+  digitalWrite(LED, HIGH);
+  delay(2500);
   digitalWrite(LED, LOW);
+
+  Serial.println("nRF52840 Peripheral");
 
   // RTC initialization  
   initRTC(32768 * SLEEP_TIME); // SLEEP_MTIME [sec]  
@@ -27,20 +30,8 @@ void setup() {
 }
 
 void loop() {
-  if ( Bluefruit.connected() ) {
-    // Note: We use .notify instead of .write!
-    // If it is connected but CCCD is not enabled
-    // The characteristic's value is still updated although notification is not sent
-  }
 
-  if (interruptFlag == true)     // If wake up interrupt
-  {       
-    Serial.println("Connecting to Central ....");
-    while (!Bluefruit.connected()) { }
-    Serial.println("Connected to Central");  
-    
-    if (Bluefruit.connected())      // If connected to the central
-    {
+  if ( Bluefruit.connected() ) {
       Serial.println("Set LED high, notify BLE characteristic, set LED low");
       digitalWrite(LED, HIGH);
 
@@ -48,18 +39,43 @@ void loop() {
       uint8_t data[2] = { 0x0, bps++ };
       characteristic.notify(data, sizeof(data));
   
+      delay(100);
+
       digitalWrite(LED, LOW);
       Serial.println("Periodic event complete, sleeping...");
-    }
-
-    interruptFlag = false;
-    // connectedFlag = false;
+  } else {
+    Serial.println("No central connected");
   }
 
-  // Sleep by calling Wait For Interrupt and Set EVent
-  __WFI();
-  __SEV();
-  __WFI(); 
+  delay(10000);
+
+  // if (interruptFlag == true)     // If wake up interrupt
+  // {       
+  //   Serial.println("Connecting to Central ....");
+  //   while (!Bluefruit.connected()) { delay(10); }
+  //   Serial.println("Connected to Central");  
+    
+  //   if (Bluefruit.connected())      // If connected to the central
+  //   {
+  //     Serial.println("Set LED high, notify BLE characteristic, set LED low");
+  //     digitalWrite(LED, HIGH);
+
+  //     // ADC read to get the voltage measurement
+  //     uint8_t data[2] = { 0x0, bps++ };
+  //     characteristic.notify(data, sizeof(data));
+  
+  //     digitalWrite(LED, LOW);
+  //     Serial.println("Periodic event complete, sleeping...");
+  //   }
+
+  //   interruptFlag = false;
+  //   // connectedFlag = false;
+  // }
+
+  // // Sleep by calling Wait For Interrupt and Set EVent
+  // __WFI();
+  // __SEV();
+  // __WFI(); 
 }
 
 // RTC initialization
