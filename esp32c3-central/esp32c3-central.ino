@@ -23,6 +23,7 @@ static boolean doScan = false;
 void setup() {
   Serial.begin(115200);
 
+  // Flash LED to show we're working and give time for serial monitor to connect
   pinMode(LED, OUTPUT);
   digitalWrite(LED, HIGH);
   delay(2500);
@@ -35,7 +36,7 @@ void setup() {
 }
 
 void loop() {
-// If the flag "doConnect" is true then we have scanned for and found the desired
+  // If the flag "doConnect" is true then we have scanned for and found the desired
   // BLE Server with which we wish to connect.  Now we connect to it.  Once we are
   // connected we set the connected flag to be true.
   if (doConnect == true) {
@@ -48,7 +49,7 @@ void loop() {
   }
 
   if (doScan) {
-    BLEDevice::getScan()->start(0);  // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
+    BLEDevice::getScan()->start(0); // Rescan after disconnect.
   }
 
   delay(1000);  // Delay a second between loops.
@@ -66,7 +67,7 @@ class AdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
       BLEDevice::getScan()->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
       doConnect = true;
-      doScan = true;
+      doScan = false;
     }
   }
 };
@@ -78,6 +79,7 @@ class ClientCallbacks : public BLEClientCallbacks {
 
   void onDisconnect(BLEClient *pclient) {
     connected = false;
+    doScan = true;
     Serial.println("onDisconnect");
   }
 };
@@ -137,11 +139,8 @@ bool connectToPeripheral() {
 
 // Callback invoked when a notification is received
 static void notifyCallback(BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
-  Serial.println("Notification received. Set LED high, delay, set LED low");
   digitalWrite(LED, HIGH);
-
   // Do something with the data
-  delay(100);
-
+  Serial.println("Notification received. Set LED high, delay, set LED low");
   digitalWrite(LED, LOW);
 }
